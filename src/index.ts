@@ -169,9 +169,30 @@ export class StyrRouter {
     const apiKey = model.apiKey || this.config.apiKey;
     const timeout = model.timeoutMs || this.config.timeoutMs;
 
+    // Normalize messages: convert camelCase (Tinkuy) → snake_case (API)
+    const normalizedMessages = messages.map(m => {
+      const msg: any = { role: m.role, content: m.content };
+      // Handle tool_call_id (snake or camel)
+      const toolCallId = m.tool_call_id || (m as any).toolCallId;
+      if (toolCallId) msg.tool_call_id = toolCallId;
+      // Handle tool_calls on assistant messages
+      const toolCalls = (m as any).tool_calls || (m as any).toolCalls;
+      if (toolCalls?.length) {
+        msg.tool_calls = toolCalls.map((tc: any) => ({
+          id: tc.id,
+          type: 'function',
+          function: {
+            name: tc.name || tc.function?.name,
+            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
+          },
+        }));
+      }
+      return msg;
+    });
+
     const body: any = {
       model: model.id,
-      messages,
+      messages: normalizedMessages,
       max_tokens: options?.maxTokens || model.maxTokens || 4096,
       temperature: options?.temperature ?? 0.7,
     };

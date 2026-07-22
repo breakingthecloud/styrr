@@ -1,0 +1,25 @@
+{
+  "name": "styrr",
+  "version": "0.1.0",
+  "description": "Minimal LLM router with multi-model fallback chain. Zero dependencies. Works in CF Workers, Lambda, Node.js.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["llm", "router", "ai", "openrouter", "bedrock", "fallback", "multi-model", "openai", "agents"],
+  "author": "Carlos Cortez <carlos@finoptix.dev>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/breakingthecloud/styrr"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

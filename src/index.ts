@@ -265,3 +265,8 @@ function tryParseJSON(text: string | undefined): any {
     return undefined;
   }
 }
+
+// ─── Re-export pricing module ───────────────────────────────────────────
+
+export { estimateCost, findPricing, selectByStrategy, fitsContext, MODEL_PRICING } from './pricing.js';
+export type { ModelPricing, RoutingStrategy } from './pricing.js';

@@ -1,8 +1,18 @@
 # @carloscortezcloud/styrr-strands
 
-Multi-model fallback as a [Strand Agents SDK](https://www.strands.ai) `Model` provider.
+Multi-model fallback as a [Strands Agents SDK](https://www.strands.ai) `Model` provider.
 
 Never crash because a single model is rate-limited or down — Styrr chains models in order and falls through automatically.
+
+## Install
+
+```bash
+npm install @carloscortezcloud/styrr-llm @carloscortezcloud/styrr-strands
+```
+
+Requires `@strands-agents/sdk` >=1.11.0 as a peer dependency.
+
+## Quick Start
 
 ```typescript
 import { Agent } from '@strands-agents/sdk';
@@ -13,7 +23,6 @@ const agent = new Agent({
     models: [
       { id: 'anthropic/claude-sonnet-4-20250514' },
       { id: 'openai/gpt-4o-mini' },
-      { id: 'meta-llama/llama-3.3-70b-instruct:free' },
     ],
     apiKey: process.env.OPENROUTER_API_KEY!,
   }),
@@ -21,37 +30,27 @@ const agent = new Agent({
 });
 ```
 
-## Install
-
-```bash
-npm install @carloscortezcloud/styrr-llm @carloscortezcloud/styrr-strands
-```
-
-Peer dependency: `@strands-agents/sdk` ^1.11.0 (likely already in your project).
-
-## Usage
-
-### Basic
+## Configuration
 
 ```typescript
-import { StyrModelProvider } from '@carloscortezcloud/styrr-strands';
-
-const model = new StyrModelProvider({
-  models: [
-    { id: 'openai/gpt-4o-mini' },
-  ],
-  apiKey: process.env.OPENROUTER_API_KEY!,
-});
+interface StyrModelProviderConfig {
+  models:      { id: string; baseUrl?: string; apiKey?: string }[];
+  apiKey:      string;
+  baseUrl?:    string;                        // default: https://openrouter.ai/api/v1
+  onFallback?: (from: string, error: string, next: string) => void;
+}
 ```
 
-### With fallback chain
+### Fallback chain
+
+Models are tried in order. If the first returns 429, 5xx, or times out, the next is tried automatically.
 
 ```typescript
 const model = new StyrModelProvider({
   models: [
-    { id: 'anthropic.claude-sonnet-4-5-v1:0' },     // Bedrock — primary
-    { id: 'openai/gpt-4o-mini' },                    // OpenRouter — fallback 1
-    { id: 'nvidia/nemotron-3-super-120b:free' },     // OpenRouter — fallback 2
+    { id: 'anthropic.claude-sonnet-4-5-v1:0' },    // Bedrock primary
+    { id: 'openai/gpt-4o-mini' },                   // OpenRouter fallback
+    { id: 'nvidia/nemotron-3-super-120b:free' },    // Free fallback
   ],
   apiKey: process.env.OPENROUTER_API_KEY!,
   onFallback: (from, error, next) => {
@@ -60,63 +59,75 @@ const model = new StyrModelProvider({
 });
 ```
 
-### With tools
+### Tools (function calling)
+
+Pass tools via the Agent config — tool schemas are forwarded to the LLM automatically.
 
 ```typescript
-const model = new StyrModelProvider({
-  models: [{ id: 'openai/gpt-4o-mini' }],
-  apiKey: process.env.OPENROUTER_API_KEY!,
-});
-
 const agent = new Agent({
-  model,
-  tools: [
-    {
-      name: 'get_weather',
-      description: 'Get current weather for a location',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          location: { type: 'string' },
-        },
-        required: ['location'],
-      },
+  model: new StyrModelProvider({
+    models: [{ id: 'openai/gpt-4o-mini' }],
+    apiKey: process.env.OPENROUTER_API_KEY!,
+  }),
+  tools: [{
+    name: 'get_weather',
+    description: 'Get current weather for a location',
+    inputSchema: {
+      type: 'object',
+      properties: { location: { type: 'string' } },
+      required: ['location'],
     },
-  ],
+  }],
   systemPrompt: 'You are a helpful assistant.',
 });
 ```
+
+## Stream Lifecycle
+
+`StyrModelProvider.stream()` maps Styrr stream events to the Strands `ModelStreamEvent` lifecycle:
+
+| Styrr event | Strands event(s) |
+|---|---|
+| `text_delta` | `modelContentBlockStartEvent` → 1+ `modelContentBlockDeltaEvent` → `modelContentBlockStopEvent` |
+| `tool_call_start` / `tool_call_done` | `modelContentBlockStartEvent(toolUseStart)` → `modelContentBlockDeltaEvent(toolUseInputDelta)` → `modelContentBlockStopEvent` |
+| `done` | `modelMessageStopEvent` + `modelMetadataEvent` |
+| `error` | `modelMessageStopEvent` (graceful close) |
 
 ## API
 
 ### `StyrModelProvider`
 
-Extends `Model<StyrModelProviderConfig>`.
+Extends `Model<StyrModelProviderConfig>`. Implements `stream()` for Strands Agent compatibility.
 
-| Method | Description |
-|--------|-------------|
-| `stream(messages, options?)` | Async iterable of `ModelStreamEvent` |
-| `updateConfig(config)` | Merge new config |
-| `getConfig()` | Return current config |
+| Method | Returns | Description |
+|---|---|---|
+| `stream(messages, options?)` | `AsyncIterable<ModelStreamEvent>` | Streaming model call |
+| `updateConfig(config)` | `void` | Merge new config, recreate router |
+| `getConfig()` | `StyrModelProviderConfig` | Return current config |
+| `modelId` | `string \| undefined` | First model ID |
 
-### `StyrModelProviderConfig`
+## Architecture
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `models` | `StyrModel[]` | required | Ordered list of models (first = primary) |
-| `apiKey` | `string` | required | API key for the router |
-| `baseUrl` | `string?` | OpenRouter default | Base URL override |
-| `onFallback` | `(from, error, next) => void` | — | Called on each fallback |
-| `maxTokens` | `number?` | provider default | Max output tokens |
-| `temperature` | `number?` | provider default | Sampling temperature |
-| `topP` | `number?` | provider default | Nucleus sampling |
-| `contextWindowLimit` | `number?` | auto-resolved | Context window size |
+```
+Strands Agent
+  └─ StyrModelProvider  (@carloscortezcloud/styrr-strands)
+       └─ StyrRouter    (@carloscortezcloud/styrr-llm)
+            ├─ OpenAI-compatible provider
+            ├─ AWS Bedrock provider
+            └─ HuggingFace provider (via Inference Endpoints)
+```
 
-## How it works
+`styrr-strands` is a thin adapter layer: it converts Strands `Message[]` → Styrr format, calls `StyrRouter.stream()`, and maps events back to `ModelStreamEvent`.
 
-1. `stream()` converts Strands `Message[]` → Styrr format
-2. Styrr calls the first model; if it fails (rate limit, 5xx, timeout), it retries then falls to the next
-3. Styrr stream events are mapped to Strands `ModelStreamEvent` lifecycle
+## Running Tests
+
+Tests are in `examples/strands-agent/`:
+
+```bash
+cd examples/strands-agent
+pnpm install
+pnpm test
+```
 
 ## License
 

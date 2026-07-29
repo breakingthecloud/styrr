@@ -211,3 +211,6 @@ export type { ModelPricing, RoutingStrategy } from './pricing.js';
 export { getProviderForModel } from './providers/index.js';
 export { OpenAICompatProvider, BedrockProvider, HuggingFaceProvider } from './providers/index.js';
 export type { StyrProvider } from './providers/index.js';
+
+export { discoverFreeModels, lastResortModels } from './discovery.js';
+export type { DiscoveredModel, DiscoveryResult, DiscoveryOptions, OpenRouterModel } from './discovery.js';

@@ -1,0 +1,14 @@
+name = "free-model-cron"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[[kv_namespaces]]
+binding = "MODELS_CACHE"
+id = ""
+preview_id = ""
+
+[triggers]
+crons = ["0 0 * * *"]
+
+[env.production]
+vars = { ENVIRONMENT = "production" }

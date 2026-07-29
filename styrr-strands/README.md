@@ -106,6 +106,24 @@ Extends `Model<StyrModelProviderConfig>`. Implements `stream()` for Strands Agen
 | `getConfig()` | `StyrModelProviderConfig` | Return current config |
 | `modelId` | `string \| undefined` | First model ID |
 
+## Why styrr-strands instead of Strands SDK directly?
+
+The Strands SDK lets you configure a single model provider (OpenAI, Anthropic, etc.). If that provider returns a 429 (rate-limited) or 5xx, the whole request fails.
+
+`StyrModelProvider` wraps **Styrr's multi-model fallback** behind the same `Model` interface:
+
+| Capability | Strands SDK (direct) | Styrr + Strands |
+|---|---|---|
+| Single provider | ✅ Uses one model | ✅ Uses one model |
+| Fallback on 429/5xx | ❌ Request fails | ✅ Auto-retries next model in chain |
+| Cross-provider fallback | ❌ Tied to one API | ✅ Bedrock → OpenRouter → local in one config |
+| Retry logic | ❌ Manual | ✅ Built-in with configurable retries |
+| Observable fallbacks | ❌ | ✅ `onFallback` hook |
+| Stream lifecycle | ✅ Native | ✅ Full `ModelStreamEvent` mapping |
+| Tool calling | ✅ Native | ✅ Forwarded through Styrr |
+
+**Concrete example**: You deploy with Claude Sonnet on Bedrock as primary, GPT-4o-mini on OpenRouter as fallback, and a free model as third resort. If Bedrock is down, the request transparently falls through — your Strands Agent never knows.
+
 ## Architecture
 
 ```

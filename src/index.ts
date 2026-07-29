@@ -1,22 +1,8 @@
-/**
- * Styrr — Minimal LLM Router with Multi-Model Fallback
- *
- * Zero dependencies. Works in CF Workers, Lambda, Node.js, Deno.
- * Extracted from Remo OSS (remo-api/services/llm-router.ts).
- *
- * Usage:
- *   import { StyrRouter } from 'styrr';
- *   const router = new StyrRouter({ models: [...], apiKey: '...' });
- *   const result = await router.call(messages);
- */
-
-// ─── Types ──────────────────────────────────────────────────────────────
-
 export interface StyrModel {
   /** Model ID (e.g., "nvidia/nemotron-3-super-120b:free") */
   id: string;
   /** Provider identifier for URL/auth routing */
-  provider?: 'openrouter' | 'openai' | 'bedrock' | 'nvidia' | 'huggingface' | 'ollama' | 'custom';
+  provider?: 'openrouter' | 'openai' | 'bedrock' | 'nvidia' | 'huggingface' | 'ollama' | 'custom' | string;
   /** Base URL override (default: OpenRouter) */
   baseUrl?: string;
   /** API key override (uses router-level key if not set) */
@@ -41,7 +27,7 @@ export interface StyrToolSchema {
 export interface StyrConfig {
   /** Ordered list of models — first is primary, rest are fallbacks */
   models: StyrModel[];
-  /** Default API key (OpenRouter format) */
+  /** Default API key */
   apiKey: string;
   /** Default base URL (default: https://openrouter.ai/api/v1) */
   baseUrl?: string;
@@ -83,9 +69,14 @@ export interface StyrCallOptions {
   temperature?: number;
   /** Max tokens for this call */
   maxTokens?: number;
+  /** Override API key for this call */
+  apiKey?: string;
+  /** Override base URL for this call */
+  baseUrl?: string;
 }
 
-// ─── Router ─────────────────────────────────────────────────────────────
+import { getProviderForModel } from './providers/index.js';
+import type { ProviderCallParams } from './providers/index.js';
 
 export class StyrRouter {
   private config: Required<Pick<StyrConfig, 'baseUrl' | 'maxRetriesPerModel' | 'timeoutMs'>> & StyrConfig;
@@ -99,11 +90,6 @@ export class StyrRouter {
     };
   }
 
-  /**
-   * Route a message through the model chain.
-   * Tries each model in order. Falls back on 429 (rate limit) or 5xx.
-   * Fails fast on 401/400 (auth/validation — won't retry with different model).
-   */
   async call(messages: StyrMessage[], options?: StyrCallOptions): Promise<StyrResponse> {
     const errors: { model: string; error: string }[] = [];
 
@@ -118,23 +104,19 @@ export class StyrRouter {
           const status = err.status || 0;
           const errorMsg = err.message || 'Unknown error';
 
-          // Auth/validation errors: fail fast (don't try other models)
           if (status === 401 || status === 400) {
             throw new Error(`Styrr: Auth/validation error on ${model.id}: ${errorMsg}`);
           }
 
-          // Rate limit or server error: try next model
           if (status === 429 || status === 404 || status >= 500) {
             errors.push({ model: model.id, error: `${status}: ${errorMsg}` });
 
-            // Notify fallback callback
             if (this.config.onFallback && i < this.config.models.length - 1) {
               this.config.onFallback(model.id, errorMsg, this.config.models[i + 1].id);
             }
-            break; // move to next model
+            break;
           }
 
-          // Unknown error on last retry: move to next model
           if (retry === this.config.maxRetriesPerModel) {
             errors.push({ model: model.id, error: errorMsg });
             break;
@@ -143,16 +125,12 @@ export class StyrRouter {
       }
     }
 
-    // All models failed
     if (this.config.onAllFailed) {
       this.config.onAllFailed(errors);
     }
     throw new Error(`Styrr: All ${this.config.models.length} models failed. Errors: ${JSON.stringify(errors)}`);
   }
 
-  /**
-   * Convenience: single prompt (wraps in system + user messages)
-   */
   async prompt(userMessage: string, systemPrompt?: string, options?: StyrCallOptions): Promise<StyrResponse> {
     const messages: StyrMessage[] = [];
     if (systemPrompt || options?.systemPrompt) {
@@ -162,20 +140,16 @@ export class StyrRouter {
     return this.call(messages, options);
   }
 
-  // ─── Private ────────────────────────────────────────────────────────
-
   private async callModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): Promise<Omit<StyrResponse, 'fallbacksTried'>> {
-    const baseUrl = model.baseUrl || this.config.baseUrl;
-    const apiKey = model.apiKey || this.config.apiKey;
+    const provider = getProviderForModel(model);
+    const apiKey = options?.apiKey || model.apiKey || this.config.apiKey;
+    const baseUrl = options?.baseUrl || model.baseUrl || this.config.baseUrl;
     const timeout = model.timeoutMs || this.config.timeoutMs;
 
-    // Normalize messages: convert camelCase (Tinkuy) → snake_case (API)
     const normalizedMessages = messages.map(m => {
       const msg: any = { role: m.role, content: m.content };
-      // Handle tool_call_id (snake or camel)
       const toolCallId = m.tool_call_id || (m as any).toolCallId;
       if (toolCallId) msg.tool_call_id = toolCallId;
-      // Handle tool_calls on assistant messages
       const toolCalls = (m as any).tool_calls || (m as any).toolCalls;
       if (toolCalls?.length) {
         msg.tool_calls = toolCalls.map((tc: any) => ({
@@ -190,75 +164,40 @@ export class StyrRouter {
       return msg;
     });
 
-    const body: any = {
+    const params: ProviderCallParams = {
       model: model.id,
       messages: normalizedMessages,
-      max_tokens: options?.maxTokens || model.maxTokens || 4096,
+      maxTokens: options?.maxTokens || model.maxTokens || 4096,
       temperature: options?.temperature ?? 0.7,
+      responseFormat: options?.responseFormat,
+      tools: options?.tools,
+      apiKey,
+      baseUrl,
+      signal: AbortSignal.timeout(timeout),
     };
-
-    if (options?.tools?.length) {
-      body.tools = options.tools;
-    }
-
-    if (options?.responseFormat === 'json') {
-      body.response_format = { type: 'json_object' };
-    }
 
     const start = Date.now();
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeout),
-    });
+    const result = await provider.call(params);
 
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      const err: any = new Error(`${response.status}: ${errBody.slice(0, 200)}`);
-      err.status = response.status;
-      throw err;
-    }
-
-    const data = await response.json() as any;
     const latencyMs = Date.now() - start;
-
-    const choice = data.choices?.[0];
-    const text = choice?.message?.content || '';
-    const toolCalls = choice?.message?.tool_calls?.map((tc: any) => ({
-      id: tc.id,
-      name: tc.function?.name,
-      arguments: tryParseJSON(tc.function?.arguments),
-    }));
-
-    // Try parsing as JSON
+    const text = result.text;
     const parsed = tryParseJSON(text);
 
     return {
       text,
       parsed: parsed !== undefined ? parsed : undefined,
-      toolCalls: toolCalls?.length ? toolCalls : undefined,
+      toolCalls: result.toolCalls,
       modelUsed: model.id,
       latencyMs,
-      usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
-      } : undefined,
+      usage: result.usage,
     };
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────
-
 function tryParseJSON(text: string | undefined): any {
   if (!text) return undefined;
   try {
-    // Strip markdown code fences if present
     const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
     return JSON.parse(cleaned);
   } catch {
@@ -266,7 +205,9 @@ function tryParseJSON(text: string | undefined): any {
   }
 }
 
-// ─── Re-export pricing module ───────────────────────────────────────────
-
 export { estimateCost, findPricing, selectByStrategy, fitsContext, MODEL_PRICING } from './pricing.js';
 export type { ModelPricing, RoutingStrategy } from './pricing.js';
+
+export { getProviderForModel } from './providers/index.js';
+export { OpenAICompatProvider, BedrockProvider, HuggingFaceProvider } from './providers/index.js';
+export type { StyrProvider } from './providers/index.js';

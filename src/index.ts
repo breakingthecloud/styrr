@@ -77,6 +77,7 @@ export interface StyrCallOptions {
 
 import { getProviderForModel } from './providers/index.js';
 import type { ProviderCallParams } from './providers/index.js';
+import type { StyrStreamEvent } from './stream.js';
 
 export class StyrRouter {
   private config: Required<Pick<StyrConfig, 'baseUrl' | 'maxRetriesPerModel' | 'timeoutMs'>> & StyrConfig;
@@ -138,6 +139,88 @@ export class StyrRouter {
     }
     messages.push({ role: 'user', content: userMessage });
     return this.call(messages, options);
+  }
+
+  async *stream(messages: StyrMessage[], options?: StyrCallOptions): AsyncGenerator<StyrStreamEvent> {
+    const errors: { model: string; error: string }[] = [];
+
+    for (let i = 0; i < this.config.models.length; i++) {
+      const model = this.config.models[i];
+      let lastError = '';
+
+      for (let retry = 0; retry <= this.config.maxRetriesPerModel; retry++) {
+        try {
+          yield* this.streamModel(model, messages, options);
+          return;
+        } catch (err: any) {
+          const status = err.status || 0;
+          lastError = err.message || 'Unknown error';
+
+          if (status === 401 || status === 400) {
+            yield { type: 'error', error: `Auth/validation error on ${model.id}: ${lastError}` };
+            return;
+          }
+
+          if (status === 429 || status === 404 || status >= 500) {
+            errors.push({ model: model.id, error: `${status}: ${lastError}` });
+
+            if (this.config.onFallback && i < this.config.models.length - 1) {
+              this.config.onFallback(model.id, lastError, this.config.models[i + 1].id);
+            }
+            break;
+          }
+
+          if (retry === this.config.maxRetriesPerModel) {
+            errors.push({ model: model.id, error: lastError });
+            break;
+          }
+        }
+      }
+    }
+
+    if (this.config.onAllFailed) {
+      this.config.onAllFailed(errors);
+    }
+    yield { type: 'error', error: `All ${this.config.models.length} models failed. Errors: ${JSON.stringify(errors)}` };
+  }
+
+  private async *streamModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): AsyncGenerator<StyrStreamEvent> {
+    const provider = getProviderForModel(model);
+    const apiKey = options?.apiKey || model.apiKey || this.config.apiKey;
+    const baseUrl = options?.baseUrl || model.baseUrl || this.config.baseUrl;
+    const timeout = model.timeoutMs || this.config.timeoutMs;
+
+    const normalizedMessages = messages.map(m => {
+      const msg: any = { role: m.role, content: m.content };
+      const toolCallId = m.tool_call_id || (m as any).toolCallId;
+      if (toolCallId) msg.tool_call_id = toolCallId;
+      const toolCalls = (m as any).tool_calls || (m as any).toolCalls;
+      if (toolCalls?.length) {
+        msg.tool_calls = toolCalls.map((tc: any) => ({
+          id: tc.id,
+          type: 'function',
+          function: {
+            name: tc.name || tc.function?.name,
+            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
+          },
+        }));
+      }
+      return msg;
+    });
+
+    const params: ProviderCallParams = {
+      model: model.id,
+      messages: normalizedMessages,
+      maxTokens: options?.maxTokens || model.maxTokens || 4096,
+      temperature: options?.temperature ?? 0.7,
+      responseFormat: options?.responseFormat,
+      tools: options?.tools,
+      apiKey,
+      baseUrl,
+      signal: AbortSignal.timeout(timeout),
+    };
+
+    yield* provider.stream(params);
   }
 
   private async callModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): Promise<Omit<StyrResponse, 'fallbacksTried'>> {
@@ -214,3 +297,5 @@ export type { StyrProvider } from './providers/index.js';
 
 export { discoverFreeModels, lastResortModels } from './discovery.js';
 export type { DiscoveredModel, DiscoveryResult, DiscoveryOptions, OpenRouterModel } from './discovery.js';
+export type { StyrStreamEvent, StyrStreamUsage } from './stream.js';
+export { parseSSEStream, openAIStreamToEvents } from './stream.js';

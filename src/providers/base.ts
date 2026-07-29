@@ -17,7 +17,10 @@ export interface ProviderCallResponse {
   model?: string;
 }
 
+import type { StyrStreamEvent } from '../stream.js';
+
 export interface StyrProvider {
   readonly name: string;
   call(params: ProviderCallParams): Promise<ProviderCallResponse>;
+  stream(params: ProviderCallParams): AsyncGenerator<StyrStreamEvent>;
 }

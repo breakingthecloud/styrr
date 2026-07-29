@@ -1,4 +1,6 @@
 import type { StyrProvider, ProviderCallParams, ProviderCallResponse } from './base.js';
+import type { StyrStreamEvent } from '../stream.js';
+import { openAIStreamToEvents } from '../stream.js';
 
 export class HuggingFaceProvider implements StyrProvider {
   readonly name = 'huggingface';
@@ -72,6 +74,12 @@ export class HuggingFaceProvider implements StyrProvider {
         totalTokens: data.usage.total_tokens,
       } : undefined,
     };
+  }
+
+  async *stream(params: ProviderCallParams): AsyncGenerator<StyrStreamEvent> {
+    const result = await this.call(params);
+    yield { type: 'text_delta', text: result.text };
+    yield { type: 'done', modelUsed: params.model, usage: result.usage };
   }
 }
 

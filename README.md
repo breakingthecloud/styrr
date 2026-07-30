@@ -1,5 +1,10 @@
 # 🧭 Styrr — Minimal LLM Router
 
+[![npm version](https://img.shields.io/npm/v/styrr?color=blue)](https://www.npmjs.com/package/styrr)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5%2B-3178C6)](https://www.typescriptlang.org)
+[![Zero Deps](https://img.shields.io/badge/dependencies-0-success)](https://github.com/breakingthecloud/styrr)
+
 Multi-model fallback chain for LLM calls. Zero dependencies. Works in Cloudflare Workers, AWS Lambda, Node.js, Deno.
 
 ## Install

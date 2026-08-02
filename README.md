@@ -142,6 +142,26 @@ const router = new StyrRouter({
 });
 ```
 
+### Bedrock AgentCore cross-provider fallback
+
+Pattern for using Styrr as the routing layer inside a Bedrock AgentCore deployment,
+with ordered fallback by budget + latency (Bedrock → external → free). Lazy-imports
+the AWS SDK, so the package stays zero-dependency:
+
+```typescript
+const router = new StyrRouter({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  models: [
+    { id: 'anthropic.claude-3-sonnet-20240229-v1:0', provider: 'bedrock' },
+    { id: 'openai/o1', provider: 'openrouter' },
+    { id: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'openrouter' },
+  ],
+});
+```
+
+See [docs/bedrock-agentcore.md](docs/bedrock-agentcore.md) for the full pattern
+(IAM auth, AgentCore tool integration, Sayay budget-aware degrade).
+
 ## Why Styrr?
 
 | Feature | Styrr | LiteLLM | OpenRouter |

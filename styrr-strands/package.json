@@ -1,6 +1,6 @@
 {
   "name": "@carloscortezcloud/styrr-strands",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Styrr multi-model fallback as a Strands Agents SDK Model provider.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,7 @@
     "url": "https://github.com/breakingthecloud/styrr"
   },
   "dependencies": {
-    "@carloscortezcloud/styrr-llm": "^0.4.0"
+    "@carloscortezcloud/styrr-llm": "^0.5.0"
   },
   "peerDependencies": {
     "@strands-agents/sdk": "^1.11.0"

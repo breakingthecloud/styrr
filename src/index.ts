@@ -35,6 +35,10 @@ export interface StyrConfig {
   maxRetriesPerModel?: number;
   /** Global timeout override (default: 30000ms) */
   timeoutMs?: number;
+  /** Routing strategy for model ordering (default: 'fallback' = config order). SoW-OSS-004 D3 */
+  strategy?: RoutingStrategy;
+  /** Ms a repeatedly-failing model stays demoted to the end of the list (default: 30000). SoW-OSS-004 D2 */
+  demotionPenaltyMs?: number;
   /** Called on each fallback (for logging/observability) */
   onFallback?: (modelId: string, error: string, nextModelId: string) => void;
   /** Called on final failure (all models exhausted) */
@@ -73,14 +77,21 @@ export interface StyrCallOptions {
   apiKey?: string;
   /** Override base URL for this call */
   baseUrl?: string;
+  /** Override routing strategy for this call */
+  strategy?: RoutingStrategy;
 }
 
 import { getProviderForModel } from './providers/index.js';
 import type { ProviderCallParams } from './providers/index.js';
 import type { StyrStreamEvent } from './stream.js';
+import { selectByStrategy, fitsContext } from './pricing.js';
+import type { RoutingStrategy } from './pricing.js';
+import { sanitizeMessages, toWireToolCall, isArgumentsValidationError } from './sanitize.js';
 
 export class StyrRouter {
   private config: Required<Pick<StyrConfig, 'baseUrl' | 'maxRetriesPerModel' | 'timeoutMs'>> & StyrConfig;
+  /** In-memory demotion state: modelId → consecutive failures + dead-until timestamp (SoW-OSS-004 D2) */
+  private demotion = new Map<string, { failures: number; deadUntil: number }>();
 
   constructor(config: StyrConfig) {
     this.config = {
@@ -91,29 +102,101 @@ export class StyrRouter {
     };
   }
 
+  /**
+   * Report a provider failure for a model (429/5xx). After 2 consecutive
+   * failures the model is demoted to the end of the rotation for
+   * `demotionPenaltyMs` (default 30s), then returns to its position.
+   */
+  reportFailure(modelId: string, _reason?: string): void {
+    const entry = this.demotion.get(modelId) ?? { failures: 0, deadUntil: 0 };
+    entry.failures += 1;
+    if (entry.failures >= 2) {
+      entry.deadUntil = Date.now() + (this.config.demotionPenaltyMs ?? 30000);
+    }
+    this.demotion.set(modelId, entry);
+  }
+
+  /** Report a success — resets the model's failure counter and demotion. */
+  reportSuccess(modelId: string): void {
+    this.demotion.delete(modelId);
+  }
+
+  /**
+   * Order models by strategy (SoW-OSS-004 D3) and move demoted (dead) models
+   * to the end — they remain as last-resort fallbacks.
+   */
+  private orderedModels(strategy: RoutingStrategy, inputChars: number): StyrModel[] {
+    const ids = this.config.models.map(m => m.id);
+    let sorted = selectByStrategy(ids, strategy, inputChars);
+
+    const fitting = sorted.filter(id => fitsContext(id, inputChars));
+    if (fitting.length > 0) sorted = fitting;
+
+    const now = Date.now();
+    const alive: string[] = [];
+    const dead: string[] = [];
+    for (const id of sorted) {
+      const d = this.demotion.get(id);
+      if (d && d.deadUntil > now) dead.push(id);
+      else alive.push(id);
+    }
+
+    const byId = new Map(this.config.models.map(m => [m.id, m]));
+    return [...alive, ...dead]
+      .map(id => byId.get(id))
+      .filter((m): m is StyrModel => m !== undefined);
+  }
+
   async call(messages: StyrMessage[], options?: StyrCallOptions): Promise<StyrResponse> {
     const errors: { model: string; error: string }[] = [];
+    const strategy = options?.strategy ?? this.config.strategy ?? 'fallback';
+    const inputChars = messages.reduce((n, m) => n + (m.content?.length || 0), 0);
+    const models = this.orderedModels(strategy, inputChars);
+    let workingMessages: StyrMessage[] = messages;
 
-    for (let i = 0; i < this.config.models.length; i++) {
-      const model = this.config.models[i];
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      let sanitizedRetried = false;
 
       for (let retry = 0; retry <= this.config.maxRetriesPerModel; retry++) {
         try {
-          const result = await this.callModel(model, messages, options);
+          const result = await this.callModel(model, workingMessages, options);
+          this.reportSuccess(model.id);
           return { ...result, fallbacksTried: i };
         } catch (err: any) {
           const status = err.status || 0;
           const errorMsg = err.message || 'Unknown error';
 
-          if (status === 401 || status === 400) {
+          if (status === 401) {
+            throw new Error(`Styrr: Auth/validation error on ${model.id}: ${errorMsg}`);
+          }
+
+          if (status === 400 && isArgumentsValidationError(status, errorMsg)) {
+            // Recoverable (SoW-OSS-003 D2): sanitize tool_call arguments and retry once,
+            // then treat as fallback-worthy instead of fatal.
+            if (!sanitizedRetried) {
+              sanitizedRetried = true;
+              workingMessages = sanitizeMessages(workingMessages);
+              retry--; // sanitized retry doesn't consume the retry budget
+              continue;
+            }
+            errors.push({ model: model.id, error: `400: ${errorMsg}` });
+            if (this.config.onFallback && i < models.length - 1) {
+              this.config.onFallback(model.id, errorMsg, models[i + 1].id);
+            }
+            break;
+          }
+
+          if (status === 400) {
             throw new Error(`Styrr: Auth/validation error on ${model.id}: ${errorMsg}`);
           }
 
           if (status === 429 || status === 404 || status >= 500) {
+            this.reportFailure(model.id, `${status}: ${errorMsg}`);
             errors.push({ model: model.id, error: `${status}: ${errorMsg}` });
 
-            if (this.config.onFallback && i < this.config.models.length - 1) {
-              this.config.onFallback(model.id, errorMsg, this.config.models[i + 1].id);
+            if (this.config.onFallback && i < models.length - 1) {
+              this.config.onFallback(model.id, errorMsg, models[i + 1].id);
             }
             break;
           }
@@ -129,7 +212,7 @@ export class StyrRouter {
     if (this.config.onAllFailed) {
       this.config.onAllFailed(errors);
     }
-    throw new Error(`Styrr: All ${this.config.models.length} models failed. Errors: ${JSON.stringify(errors)}`);
+    throw new Error(`Styrr: All ${models.length} models failed. Errors: ${JSON.stringify(errors)}`);
   }
 
   async prompt(userMessage: string, systemPrompt?: string, options?: StyrCallOptions): Promise<StyrResponse> {
@@ -143,29 +226,57 @@ export class StyrRouter {
 
   async *stream(messages: StyrMessage[], options?: StyrCallOptions): AsyncGenerator<StyrStreamEvent> {
     const errors: { model: string; error: string }[] = [];
+    const strategy = options?.strategy ?? this.config.strategy ?? 'fallback';
+    const inputChars = messages.reduce((n, m) => n + (m.content?.length || 0), 0);
+    const models = this.orderedModels(strategy, inputChars);
+    let workingMessages: StyrMessage[] = messages;
 
-    for (let i = 0; i < this.config.models.length; i++) {
-      const model = this.config.models[i];
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
       let lastError = '';
+      let sanitizedRetried = false;
 
       for (let retry = 0; retry <= this.config.maxRetriesPerModel; retry++) {
         try {
-          yield* this.streamModel(model, messages, options);
+          yield* this.streamModel(model, workingMessages, options);
+          this.reportSuccess(model.id);
           return;
         } catch (err: any) {
           const status = err.status || 0;
           lastError = err.message || 'Unknown error';
 
-          if (status === 401 || status === 400) {
+          if (status === 401) {
+            yield { type: 'error', error: `Auth/validation error on ${model.id}: ${lastError}` };
+            return;
+          }
+
+          if (status === 400 && isArgumentsValidationError(status, lastError)) {
+            // Recoverable (SoW-OSS-003 D2): sanitize tool_call arguments and retry once,
+            // then fall to the next model before emitting a final error.
+            if (!sanitizedRetried) {
+              sanitizedRetried = true;
+              workingMessages = sanitizeMessages(workingMessages);
+              retry--; // sanitized retry doesn't consume the retry budget
+              continue;
+            }
+            errors.push({ model: model.id, error: `400: ${lastError}` });
+            if (this.config.onFallback && i < models.length - 1) {
+              this.config.onFallback(model.id, lastError, models[i + 1].id);
+            }
+            break;
+          }
+
+          if (status === 400) {
             yield { type: 'error', error: `Auth/validation error on ${model.id}: ${lastError}` };
             return;
           }
 
           if (status === 429 || status === 404 || status >= 500) {
+            this.reportFailure(model.id, `${status}: ${lastError}`);
             errors.push({ model: model.id, error: `${status}: ${lastError}` });
 
-            if (this.config.onFallback && i < this.config.models.length - 1) {
-              this.config.onFallback(model.id, lastError, this.config.models[i + 1].id);
+            if (this.config.onFallback && i < models.length - 1) {
+              this.config.onFallback(model.id, lastError, models[i + 1].id);
             }
             break;
           }
@@ -181,7 +292,7 @@ export class StyrRouter {
     if (this.config.onAllFailed) {
       this.config.onAllFailed(errors);
     }
-    yield { type: 'error', error: `All ${this.config.models.length} models failed. Errors: ${JSON.stringify(errors)}` };
+    yield { type: 'error', error: `All ${models.length} models failed. Errors: ${JSON.stringify(errors)}` };
   }
 
   private async *streamModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): AsyncGenerator<StyrStreamEvent> {
@@ -196,14 +307,8 @@ export class StyrRouter {
       if (toolCallId) msg.tool_call_id = toolCallId;
       const toolCalls = (m as any).tool_calls || (m as any).toolCalls;
       if (toolCalls?.length) {
-        msg.tool_calls = toolCalls.map((tc: any) => ({
-          id: tc.id,
-          type: 'function',
-          function: {
-            name: tc.name || tc.function?.name,
-            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
-          },
-        }));
+        // SoW-OSS-003: arguments always serialized as a valid JSON object string
+        msg.tool_calls = toolCalls.map(toWireToolCall);
       }
       return msg;
     });
@@ -235,14 +340,8 @@ export class StyrRouter {
       if (toolCallId) msg.tool_call_id = toolCallId;
       const toolCalls = (m as any).tool_calls || (m as any).toolCalls;
       if (toolCalls?.length) {
-        msg.tool_calls = toolCalls.map((tc: any) => ({
-          id: tc.id,
-          type: 'function',
-          function: {
-            name: tc.name || tc.function?.name,
-            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
-          },
-        }));
+        // SoW-OSS-003: arguments always serialized as a valid JSON object string
+        msg.tool_calls = toolCalls.map(toWireToolCall);
       }
       return msg;
     });
@@ -295,7 +394,9 @@ export { getProviderForModel } from './providers/index.js';
 export { OpenAICompatProvider, BedrockProvider, HuggingFaceProvider } from './providers/index.js';
 export type { StyrProvider } from './providers/index.js';
 
-export { discoverFreeModels, lastResortModels } from './discovery.js';
-export type { DiscoveredModel, DiscoveryResult, DiscoveryOptions, OpenRouterModel } from './discovery.js';
+export { discoverFreeModels, lastResortModels, recommendToolsFirst } from './discovery.js';
+export type { DiscoveredModel, DiscoveryResult, DiscoveryOptions, OpenRouterModel, RecommendOptions, RecommendResult } from './discovery.js';
+export { sanitizeToolCall, safeArguments, sanitizeMessages, toPlainObject, toWireToolCall, isArgumentsValidationError } from './sanitize.js';
+export type { SanitizedToolCall } from './sanitize.js';
 export type { StyrStreamEvent, StyrStreamUsage } from './stream.js';
 export { parseSSEStream, openAIStreamToEvents } from './stream.js';

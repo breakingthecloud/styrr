@@ -1,6 +1,7 @@
 import type { StyrProvider, ProviderCallParams, ProviderCallResponse } from './base.js';
 import type { StyrStreamEvent } from '../stream.js';
 import { openAIStreamToEvents } from '../stream.js';
+import { toWireToolCall } from '../sanitize.js';
 
 export class OpenAICompatProvider implements StyrProvider {
   readonly name = 'openai-compat';
@@ -14,14 +15,8 @@ export class OpenAICompatProvider implements StyrProvider {
       const msg: any = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       if (m.tool_calls?.length) {
-        msg.tool_calls = m.tool_calls.map((tc: any) => ({
-          id: tc.id,
-          type: 'function',
-          function: {
-            name: tc.name || tc.function?.name,
-            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
-          },
-        }));
+        // Idempotent (SoW-OSS-003): safe even if router already normalized
+        msg.tool_calls = m.tool_calls.map(toWireToolCall);
       }
       return msg;
     });
@@ -82,14 +77,8 @@ export class OpenAICompatProvider implements StyrProvider {
       const msg: any = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       if (m.tool_calls?.length) {
-        msg.tool_calls = m.tool_calls.map((tc: any) => ({
-          id: tc.id,
-          type: 'function',
-          function: {
-            name: tc.name || tc.function?.name,
-            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
-          },
-        }));
+        // Idempotent (SoW-OSS-003): safe even if router already normalized
+        msg.tool_calls = m.tool_calls.map(toWireToolCall);
       }
       return msg;
     });

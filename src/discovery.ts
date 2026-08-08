@@ -1,3 +1,5 @@
+import { findPricing } from './pricing.js';
+
 export interface OpenRouterModel {
   id: string;
   name?: string;
@@ -98,6 +100,69 @@ export function lastResortModels(): string[] {
     'mistralai/mistral-small-3.2-24b-instruct:free',
     'qwen/qwen3-coder:free',
   ];
+}
+
+// ─── Tools-first precheck (SoW-OSS-004 D1) ──────────────────────────────
+
+export interface RecommendOptions {
+  /** Minimum context window in tokens (default: 8192) */
+  minContext?: number;
+  /** Cap the ranked list (default: no cap) */
+  maxResults?: number;
+}
+
+export interface RecommendResult {
+  /** Echo of the input ids, in input order */
+  models: string[];
+  /** Ids that pass the tools + context precheck (unordered) */
+  toolCapable: string[];
+  /** toolCapable ordered by quality: qualityScore desc (unknown last), avgLatencyMs asc tie-break */
+  ranked: string[];
+}
+
+/**
+ * Canonical precheck: given model ids (or DiscoveredModel entries), return
+ * the tool-capable subset ranked by quality. Apps consume `ranked` and cache
+ * it — they should NOT reimplement the filter.
+ *
+ * Tool support: when a DiscoveredModel is given, its `supportsTools` flag is
+ * authoritative. For plain string ids the model is assumed tool-capable
+ * (discovery already filtered by `supported_parameters`).
+ */
+export function recommendToolsFirst(
+  models: (string | DiscoveredModel)[],
+  opts: RecommendOptions = {}
+): RecommendResult {
+  const { minContext = 8192, maxResults } = opts;
+
+  const entries = models.map(m =>
+    typeof m === 'string'
+      ? { id: m, supportsTools: undefined as boolean | undefined, contextLength: undefined as number | undefined }
+      : { id: m.id, supportsTools: m.supportsTools as boolean | undefined, contextLength: m.contextLength as number | undefined }
+  );
+
+  const toolCapable = entries.filter(e => {
+    if (e.supportsTools === false) return false;
+    const ctx = e.contextLength ?? findPricing(e.id)?.contextWindow ?? 0;
+    return ctx >= minContext;
+  });
+
+  const ranked = [...toolCapable].sort((a, b) => {
+    const pa = findPricing(a.id);
+    const pb = findPricing(b.id);
+    const qa = pa?.qualityScore ?? null;
+    const qb = pb?.qualityScore ?? null;
+    if (qa !== qb) return (qb ?? -1) - (qa ?? -1); // quality desc, unknown last
+    return (pa?.avgLatencyMs ?? 10000) - (pb?.avgLatencyMs ?? 10000); // latency asc
+  });
+
+  const capped = maxResults ? ranked.slice(0, maxResults) : ranked;
+
+  return {
+    models: entries.map(e => e.id),
+    toolCapable: toolCapable.map(e => e.id),
+    ranked: capped.map(e => e.id),
+  };
 }
 
 function extractProvider(modelId: string): string {

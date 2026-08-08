@@ -34,8 +34,9 @@ export type RoutingStrategy = 'cheapest' | 'fastest' | 'quality' | 'fallback';
 
 export const MODEL_PRICING: ModelPricing[] = [
   // Free (OpenRouter)
-  { model: 'nvidia/nemotron-3-ultra-550b-a55b:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 32768, avgLatencyMs: 3000, qualityScore: 85 },
-  { model: 'nvidia/nemotron-3-super-120b-a12b:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 32768, avgLatencyMs: 2500, qualityScore: 80 },
+  // NOTE: nvidia free models demoted in quality — flaky in prod (502 "Failed to apply prompt template"), SoW-OSS-004
+  { model: 'nvidia/nemotron-3-ultra-550b-a55b:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 32768, avgLatencyMs: 3000, qualityScore: 65 },
+  { model: 'nvidia/nemotron-3-super-120b-a12b:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 32768, avgLatencyMs: 2500, qualityScore: 60 },
   { model: 'google/gemma-4-31b-it:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 131072, avgLatencyMs: 2000, qualityScore: 75 },
   { model: 'google/gemma-4-26b-a4b-it:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 131072, avgLatencyMs: 1800, qualityScore: 73 },
   { model: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'openrouter', inputPer1K: 0, outputPer1K: 0, contextWindow: 131072, avgLatencyMs: 2000, qualityScore: 78 },

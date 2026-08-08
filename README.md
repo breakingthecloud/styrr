@@ -184,6 +184,25 @@ See [docs/bedrock-agentcore.md](docs/bedrock-agentcore.md) for the full pattern
 | **Qhaway** | Agent observability | `@carloscortezcloud/qhaway` |
 | **TideRAG** | Edge RAG pipeline | `@carloscortezcloud/tiderag` |
 
+## Guides & Examples (v0.6.0)
+
+What we learned shipping v0.6.0 into prod — and how to use it right.
+
+| Guide | Covers |
+|-------|--------|
+| [`GUIDE-tool-call-robustness.md`](GUIDE-tool-call-robustness.md) | Sanitized tool-call arguments, 400 non-fatal recovery, safe multi-turn tool loops |
+| [`GUIDE-free-model-routing.md`](GUIDE-free-model-routing.md) | Free-model pre-check, quality ranking, `strategy:'quality'`, demotion of dead models |
+| [`GUIDE-provider-adapters.md`](GUIDE-provider-adapters.md) | Provider setup (OpenRouter, OpenAI, Bedrock, Ollama, HF, custom) |
+
+| Example | Run |
+|---------|-----|
+| [`examples/tool-loop/`](examples/tool-loop/) | Multi-turn tool-calling loop with sanitized arguments + 400 fallback |
+| [`examples/quality-router/`](examples/quality-router/) | CF Worker: discover → `recommendToolsFirst` → KV cache → `strategy:'quality'` + demotion |
+| [`examples/free-model-cron/`](examples/free-model-cron/) | Discovery-only cron (pre-v0.6 pattern) |
+| [`examples/stream-sse-local/`](examples/stream-sse-local/) | Streaming SSE server with tool events |
+| [`examples/agentcore-cross-provider-fallback/`](examples/agentcore-cross-provider-fallback/) | Bedrock AgentCore fallback pattern |
+| [`examples/strands-agent/`](examples/strands-agent/) | Strands adapters integration |
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

@@ -1,9 +1,9 @@
 # Styrr Changelog
 
-> Historial público de releases de [`@carloscortezcloud/styrr-llm`](https://www.npmjs.com/package/@carloscortezcloud/styrr-llm) — 1 entrada por versión npm/git tag.
-> Repo: https://github.com/breakingthecloud/styrr · Guías: `GUIDE-*.md` · Ejemplos: `examples/`
+> Historial público de releases de [`@carloscortezcloud/styrr-llm`](https://www.npmjs.com/package/@carloscortezcloud/styrr-llm) · [`@carloscortezcloud/styrr-strands`](https://www.npmjs.com/package/@carloscortezcloud/styrr-strands) · `styrr` (PyPI) — 1 entrada por versión.
+> Repos: https://github.com/breakingthecloud/styrr + https://github.com/breakingthecloud/styrr-py · Guías: `GUIDE-*.md`
 
-Última actualización: **2026-08-25** · `v0.1.0` → `v0.6.0` · Verificado desde `git tag` + `npm view`.
+Última actualización: **2026-08-25** · `v0.1.0` → `v0.6.0` (+ `styrr-strands@0.1.0`/`0.1.1` + `styrr` PyPI `0.1.0`) · Verificado `git tag` + `npm view` + `PyPI`.
 
 ---
 
@@ -20,8 +20,11 @@
 | **0.1.2** | `v0.1.2` | 2026-07-22 | 2026-07-22 23:44 UTC | Normalize camelCase → snake_case |
 | **0.1.1** | `v0.1.1` | 2026-07-22 | 2026-07-22 23:36 UTC | Fix ESM `type: module` (retroactivo) |
 | **0.1.0** | `v0.1.0` | 2026-07-22 | 2026-07-22 23:29 UTC | Initial: 246 líneas, zero deps, fallback chain |
+| **strands 0.1.0** | `styrr-strands@0.1.0` | 2026-07-28 | 2026-07-29 01:41 UTC | Strands adapter `StyrModelProvider` |
+| **strands 0.1.1** | `styrr-strands@0.1.1` | 2026-08-02 | 2026-08-02 21:40 UTC | Bump `styrr-llm` `^0.5.0` (retroactivo) |
+| **py 0.1.0** | `v0.1.0` (py) | 2026-07-29 | 2026-07-29 (PyPI) | Python `styrr 0.1.0` · `httpx` + `boto3` |
 
-> Notas: `v0.1.1` y `v0.5.0` se publicaron a npm sin tag en remote — retroactivos creados 2026-08-25.
+> Notas: `v0.1.1`, `v0.5.0`, `styrr-strands@0.1.1` retroactivos 2026-08-25.
 
 ---
 
@@ -170,9 +173,30 @@ await router.call([{ role: 'user', content: 'Hello' }]);
 
 ## Extra: styrr-strands@0.1.0 — 2026-07-28 — Strands adapter
 
-**Tag:** `styrr-strands@0.1.0` @ `e07c642` · 2026-07-28 20:35:38 -0500
+**Tag:** `styrr-strands@0.1.0` @ `e07c642` · **npm:** `0.1.0` @ 2026-07-29T01:41:03.644Z
 
 - `StyrModelProvider extends Model<T>` de `@strands-agents/sdk` — `stream()` mapeado a `ModelStreamEvent`, `mappers.ts`, fallback chain
+
+---
+
+## Extra: styrr-strands@0.1.1 — 2026-08-02 — Bump
+
+**Tag:** `styrr-strands@0.1.1` @ `552bfa3` · **npm:** `0.1.1` @ 2026-08-02T21:40:57.026Z
+
+- Bump `styrr-llm` dep `^0.5.0` — retroactivo 2026-08-25 (npm sin tag)
+
+---
+
+## Extra: styrr 0.1.0 (PyPI) — Python SDK
+
+**Tag:** `v0.1.0` (styrr-py) @ `d8d1ffe` · **PyPI:** `styrr 0.1.0` @ 2026-07-29
+
+- `styrr` (PyPI) — `pip install styrr` — `StyrRouter` Python con `httpx`, extras `styrr[bedrock]` (`boto3`), `styrr[huggingface]`
+
+```python
+from styrr import StyrRouter
+router = StyrRouter(models=[{"id": "meta-llama/llama-3.3-70b:free"}])
+```
 
 ---
 

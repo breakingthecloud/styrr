@@ -3,7 +3,7 @@
 > Historial público de releases de [`@carloscortezcloud/styrr-llm`](https://www.npmjs.com/package/@carloscortezcloud/styrr-llm) · [`@carloscortezcloud/styrr-strands`](https://www.npmjs.com/package/@carloscortezcloud/styrr-strands) · `styrr` (PyPI) — 1 entrada por versión.
 > Repos: https://github.com/breakingthecloud/styrr + https://github.com/breakingthecloud/styrr-py · Guías: `GUIDE-*.md`
 
-Última actualización: **2026-10-26** · `v0.1.0` → `v0.7.0` (+ `styrr-strands@0.1.0`/`0.1.1` + `styrr` PyPI `0.1.0`) · Verificado `git tag` + `npm view` + `PyPI`.
+Última actualización: **2026-10-26** · `v0.1.0` → `v0.7.1` (+ `styrr-strands@0.1.0`/`0.1.1` + `styrr` PyPI `0.1.0`) · Verificado `git tag` + `npm view` + `PyPI`.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Versión | Git tag | Fecha (git) | Fecha (npm) | Resumen |
 |---------|---------|-------------|-------------|---------|
-| **0.7.0** | `v0.7.0` | 2026-10-26 | pendiente (npm auth) | OpenCode Go + multi-provider keys/headers + catalog ranking |
+| **0.7.1** | `v0.7.1` | 2026-10-26 | 2026-10-26 | OpenCode Go + multi-provider keys/headers + catalog ranking (0.7.0 atascado por bug npm) |
 | **0.6.0** | `v0.6.0` | 2026-08-08 | 2026-08-08 14:12 UTC | Sanitización tool_call + quality routing + demotion |
 | **0.5.0** | `v0.5.0` | 2026-08-02 | 2026-08-02 21:38 UTC | Bedrock AgentCore cross-provider fallback |
 | **0.4.0** | `v0.4.0` | 2026-07-28 | 2026-07-29 01:25 UTC | Streaming `router.stream()` + SSE + Bedrock streaming |
@@ -29,9 +29,11 @@
 
 ---
 
-## v0.7.0 — 2026-10-26 — OpenCode Go + multi-provider + catalog ranking
+## v0.7.1 — 2026-10-26 — OpenCode Go + multi-provider + catalog ranking
 
-**Tag:** `v0.7.0` · **npm:** pendiente (token 401/404 al publicar) · **Tarball:** 24 files, 84,343 unpacked
+**Tag:** `v0.7.1` · **npm:** `0.7.1` · **Tarball:** 24 files, ~85 kB unpacked
+
+> `0.7.0` no se pudo publicar: npm devolvía `409 Cannot publish over previously staged version` sin existir como staged (bug [npm/cli#9889](https://github.com/npm/cli/issues/9889)). Se publica como `0.7.1` con el mismo contenido.
 
 **SoW-MNG-010 — relacionado (cambios aditivos, sin breaking changes):**
 - Provider de primera clase `opencode-go` (`https://opencode.ai/inference/go/openai/v1`).

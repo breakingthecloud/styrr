@@ -142,6 +142,26 @@ const router = new StyrRouter({
 });
 ```
 
+### Multiple providers with different keys (OpenCode Go + OpenRouter)
+
+```typescript
+const router = new StyrRouter({
+  apiKeys: {
+    openrouter: process.env.OPENROUTER_API_KEY!,
+    'opencode-go': process.env.OPENCODE_API_KEY!,
+  },
+  models: [
+    { id: 'glm-5.3', provider: 'opencode-go' },                 // paid, primary
+    { id: 'minimax-m3', provider: 'opencode-go' },              // paid, cheap
+    { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter' },
+  ],
+});
+```
+
+OpenCode Go uses bare model IDs and requires an `x-opencode-session` header;
+Styrr adds it automatically (override via `model.headers` if needed). See
+[`GUIDE-provider-adapters.md`](GUIDE-provider-adapters.md#8-opencode-go).
+
 ### Bedrock AgentCore cross-provider fallback
 
 Pattern for using Styrr as the routing layer inside a Bedrock AgentCore deployment,

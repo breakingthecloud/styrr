@@ -3,7 +3,7 @@
 > Historial público de releases de [`@carloscortezcloud/styrr-llm`](https://www.npmjs.com/package/@carloscortezcloud/styrr-llm) · [`@carloscortezcloud/styrr-strands`](https://www.npmjs.com/package/@carloscortezcloud/styrr-strands) · `styrr` (PyPI) — 1 entrada por versión.
 > Repos: https://github.com/breakingthecloud/styrr + https://github.com/breakingthecloud/styrr-py · Guías: `GUIDE-*.md`
 
-Última actualización: **2026-08-25** · `v0.1.0` → `v0.6.0` (+ `styrr-strands@0.1.0`/`0.1.1` + `styrr` PyPI `0.1.0`) · Verificado `git tag` + `npm view` + `PyPI`.
+Última actualización: **2026-10-26** · `v0.1.0` → `v0.7.0` (+ `styrr-strands@0.1.0`/`0.1.1` + `styrr` PyPI `0.1.0`) · Verificado `git tag` + `npm view` + `PyPI`.
 
 ---
 
@@ -11,6 +11,7 @@
 
 | Versión | Git tag | Fecha (git) | Fecha (npm) | Resumen |
 |---------|---------|-------------|-------------|---------|
+| **0.7.0** | `v0.7.0` | 2026-10-26 | pendiente (npm auth) | OpenCode Go + multi-provider keys/headers + catalog ranking |
 | **0.6.0** | `v0.6.0` | 2026-08-08 | 2026-08-08 14:12 UTC | Sanitización tool_call + quality routing + demotion |
 | **0.5.0** | `v0.5.0` | 2026-08-02 | 2026-08-02 21:38 UTC | Bedrock AgentCore cross-provider fallback |
 | **0.4.0** | `v0.4.0` | 2026-07-28 | 2026-07-29 01:25 UTC | Streaming `router.stream()` + SSE + Bedrock streaming |
@@ -25,6 +26,38 @@
 | **py 0.1.0** | `v0.1.0` (py) | 2026-07-29 | 2026-07-29 (PyPI) | Python `styrr 0.1.0` · `httpx` + `boto3` |
 
 > Notas: `v0.1.1`, `v0.5.0`, `styrr-strands@0.1.1` retroactivos 2026-08-25.
+
+---
+
+## v0.7.0 — 2026-10-26 — OpenCode Go + multi-provider + catalog ranking
+
+**Tag:** `v0.7.0` · **npm:** pendiente (token 401/404 al publicar) · **Tarball:** 24 files, 84,343 unpacked
+
+**SoW-MNG-010 — relacionado (cambios aditivos, sin breaking changes):**
+- Provider de primera clase `opencode-go` (`https://opencode.ai/inference/go/openai/v1`).
+- `StyrConfig.apiKeys` y `providers` por provider: un router puede mezclar OpenRouter + OpenCode Go con distintas keys y base URLs.
+- `StyrModel.headers` + `providers[].headers`. OpenCode Go requiere `x-opencode-session`; Styrr lo genera automáticamente y agrega `User-Agent: cc-mng/0.1.0` (el edge bloquea algunos UA por defecto).
+- Demotion y `fallback` ahora usan la clave canónica `provider:id` (los IDs colisionan entre providers, ej. `minimax-m3`).
+- Nuevo `src/catalog.ts`: `rankCatalog(models, rules)`, `toStyrModels(models)`, `buildModelChain(ranked, { pinned, limit })`, `catalogKey()`, `blendedCostPer1M()`.
+- `strategy: 'fallback'` preserva el orden recibido (el caller ya rankeó); otras estrategias siguen ordenando por pricing.
+- 55 tests green (19 sanitize + 8 discovery + 13 router + 8 catalog + 7 strands).
+
+```ts
+const router = new StyrRouter({
+  apiKeys: {
+    openrouter: process.env.OPENROUTER_API_KEY!,
+    'opencode-go': process.env.OPENCODE_API_KEY!,
+  },
+  models: [
+    { id: 'glm-5.3', provider: 'opencode-go' },
+    { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter' },
+  ],
+});
+```
+
+> Nota: los IDs de OpenCode Go son bare y colisionan con OpenRouter (`minimax-m3`), por eso `provider` es obligatorio para ese provider y la clave canónica es `provider:id`.
+
+Ver `GUIDE-provider-adapters.md`.
 
 ---
 

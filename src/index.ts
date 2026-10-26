@@ -2,11 +2,13 @@ export interface StyrModel {
   /** Model ID (e.g., "nvidia/nemotron-3-super-120b:free") */
   id: string;
   /** Provider identifier for URL/auth routing */
-  provider?: 'openrouter' | 'openai' | 'bedrock' | 'nvidia' | 'huggingface' | 'ollama' | 'custom' | string;
+  provider?: 'openrouter' | 'opencode-go' | 'openai' | 'bedrock' | 'nvidia' | 'huggingface' | 'ollama' | 'custom' | string;
   /** Base URL override (default: OpenRouter) */
   baseUrl?: string;
   /** API key override (uses router-level key if not set) */
   apiKey?: string;
+  /** Extra request headers for this model (merged over provider headers). */
+  headers?: Record<string, string>;
   /** Timeout in ms (default: 30000) */
   timeoutMs?: number;
   /** Max output tokens (default: 4096) */
@@ -27,8 +29,12 @@ export interface StyrToolSchema {
 export interface StyrConfig {
   /** Ordered list of models — first is primary, rest are fallbacks */
   models: StyrModel[];
-  /** Default API key */
-  apiKey: string;
+  /** Default API key (legacy single-provider). Prefer `apiKeys` for multi-provider. */
+  apiKey?: string;
+  /** Per-provider API keys, e.g. { openrouter: env.OPENROUTER_API_KEY, 'opencode-go': env.OPENCODE_API_KEY } */
+  apiKeys?: Partial<Record<string, string>>;
+  /** Per-provider base URL and header overrides. */
+  providers?: Partial<Record<string, { baseUrl: string; headers?: Record<string, string> }>>;
   /** Default base URL (default: https://openrouter.ai/api/v1) */
   baseUrl?: string;
   /** Max retries per model before falling to next (default: 1) */
@@ -81,7 +87,7 @@ export interface StyrCallOptions {
   strategy?: RoutingStrategy;
 }
 
-import { getProviderForModel } from './providers/index.js';
+import { getProviderForModel, DEFAULT_PROVIDER_BASE_URLS } from './providers/index.js';
 import type { ProviderCallParams } from './providers/index.js';
 import type { StyrStreamEvent } from './stream.js';
 import { selectByStrategy, fitsContext } from './pricing.js';
@@ -90,7 +96,7 @@ import { sanitizeMessages, toWireToolCall, isArgumentsValidationError } from './
 
 export class StyrRouter {
   private config: Required<Pick<StyrConfig, 'baseUrl' | 'maxRetriesPerModel' | 'timeoutMs'>> & StyrConfig;
-  /** In-memory demotion state: modelId → consecutive failures + dead-until timestamp (SoW-OSS-004 D2) */
+  /** In-memory demotion state: provider:model key → consecutive failures + dead-until timestamp (SoW-OSS-004 D2) */
   private demotion = new Map<string, { failures: number; deadUntil: number }>();
 
   constructor(config: StyrConfig) {
@@ -100,6 +106,50 @@ export class StyrRouter {
       timeoutMs: 30000,
       ...config,
     };
+  }
+
+  /** Canonical key — model IDs collide across providers (e.g. minimax-m3). */
+  private modelKey(model: Pick<StyrModel, 'id' | 'provider'>): string {
+    return model.provider ? `${model.provider}:${model.id}` : model.id;
+  }
+
+  /** Resolve the base URL for a model or provider. */
+  private resolveBaseUrl(provider?: string): string {
+    const p = provider || 'openrouter';
+    return this.config.providers?.[p]?.baseUrl
+      ?? DEFAULT_PROVIDER_BASE_URLS[p]
+      ?? this.config.baseUrl;
+  }
+
+  /** Resolve the API key for a model (model override → per-provider → legacy default). */
+  private resolveApiKey(model: StyrModel): string | undefined {
+    if (model.apiKey) return model.apiKey;
+    if (model.provider && this.config.apiKeys?.[model.provider]) {
+      return this.config.apiKeys[model.provider];
+    }
+    return this.config.apiKey;
+  }
+
+  /** Resolve extra request headers (provider defaults → provider config → model). */
+  private resolveHeaders(model: StyrModel): Record<string, string> | undefined {
+    const provider = model.provider || 'openrouter';
+    const headers: Record<string, string> = {
+      ...(this.config.providers?.[provider]?.headers || {}),
+      ...(model.headers || {}),
+    };
+
+    // OpenCode Go requires a session header for routing and blocks some default
+    // User-Agents at the Cloudflare edge.
+    if (provider === 'opencode-go') {
+      if (!headers['x-opencode-session'] && !headers['X-Opencode-Session']) {
+        headers['x-opencode-session'] = newSessionId();
+      }
+      if (!headers['User-Agent'] && !headers['user-agent']) {
+        headers['User-Agent'] = 'cc-mng/0.1.0';
+      }
+    }
+
+    return Object.keys(headers).length > 0 ? headers : undefined;
   }
 
   /**
@@ -124,27 +174,41 @@ export class StyrRouter {
   /**
    * Order models by strategy (SoW-OSS-004 D3) and move demoted (dead) models
    * to the end — they remain as last-resort fallbacks.
+   *
+   * For `fallback`, the configured order is preserved as-is (callers such as MNG
+   * already pass a ranked catalog). Other strategies sort by pricing.
    */
   private orderedModels(strategy: RoutingStrategy, inputChars: number): StyrModel[] {
-    const ids = this.config.models.map(m => m.id);
-    let sorted = selectByStrategy(ids, strategy, inputChars);
+    let ordered: StyrModel[];
 
-    const fitting = sorted.filter(id => fitsContext(id, inputChars));
-    if (fitting.length > 0) sorted = fitting;
-
-    const now = Date.now();
-    const alive: string[] = [];
-    const dead: string[] = [];
-    for (const id of sorted) {
-      const d = this.demotion.get(id);
-      if (d && d.deadUntil > now) dead.push(id);
-      else alive.push(id);
+    if (strategy === 'fallback') {
+      ordered = [...this.config.models];
+    } else {
+      const ids = this.config.models.map(m => m.id);
+      const sortedIds = selectByStrategy(ids, strategy, inputChars);
+      ordered = [];
+      for (const id of sortedIds) {
+        const matches = this.config.models.filter(m => m.id === id && !ordered.includes(m));
+        ordered.push(...matches);
+      }
+      for (const m of this.config.models) {
+        if (!ordered.includes(m)) ordered.push(m);
+      }
     }
 
-    const byId = new Map(this.config.models.map(m => [m.id, m]));
-    return [...alive, ...dead]
-      .map(id => byId.get(id))
-      .filter((m): m is StyrModel => m !== undefined);
+    const fitting = ordered.filter(m => fitsContext(m.id, inputChars));
+    if (fitting.length > 0) ordered = fitting;
+
+    const now = Date.now();
+    const alive: StyrModel[] = [];
+    const dead: StyrModel[] = [];
+    for (const model of ordered) {
+      const d = this.demotion.get(this.modelKey(model));
+      if (d && d.deadUntil > now) dead.push(model);
+      else alive.push(model);
+    }
+
+    return [...alive, ...dead];
   }
 
   async call(messages: StyrMessage[], options?: StyrCallOptions): Promise<StyrResponse> {
@@ -161,7 +225,7 @@ export class StyrRouter {
       for (let retry = 0; retry <= this.config.maxRetriesPerModel; retry++) {
         try {
           const result = await this.callModel(model, workingMessages, options);
-          this.reportSuccess(model.id);
+          this.reportSuccess(this.modelKey(model));
           return { ...result, fallbacksTried: i };
         } catch (err: any) {
           const status = err.status || 0;
@@ -192,7 +256,7 @@ export class StyrRouter {
           }
 
           if (status === 429 || status === 404 || status >= 500) {
-            this.reportFailure(model.id, `${status}: ${errorMsg}`);
+            this.reportFailure(this.modelKey(model), `${status}: ${errorMsg}`);
             errors.push({ model: model.id, error: `${status}: ${errorMsg}` });
 
             if (this.config.onFallback && i < models.length - 1) {
@@ -239,7 +303,7 @@ export class StyrRouter {
       for (let retry = 0; retry <= this.config.maxRetriesPerModel; retry++) {
         try {
           yield* this.streamModel(model, workingMessages, options);
-          this.reportSuccess(model.id);
+          this.reportSuccess(this.modelKey(model));
           return;
         } catch (err: any) {
           const status = err.status || 0;
@@ -272,7 +336,7 @@ export class StyrRouter {
           }
 
           if (status === 429 || status === 404 || status >= 500) {
-            this.reportFailure(model.id, `${status}: ${lastError}`);
+            this.reportFailure(this.modelKey(model), `${status}: ${lastError}`);
             errors.push({ model: model.id, error: `${status}: ${lastError}` });
 
             if (this.config.onFallback && i < models.length - 1) {
@@ -297,8 +361,8 @@ export class StyrRouter {
 
   private async *streamModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): AsyncGenerator<StyrStreamEvent> {
     const provider = getProviderForModel(model);
-    const apiKey = options?.apiKey || model.apiKey || this.config.apiKey;
-    const baseUrl = options?.baseUrl || model.baseUrl || this.config.baseUrl;
+    const apiKey = options?.apiKey || this.resolveApiKey(model);
+    const baseUrl = options?.baseUrl || model.baseUrl || this.resolveBaseUrl(model.provider);
     const timeout = model.timeoutMs || this.config.timeoutMs;
 
     const normalizedMessages = messages.map(m => {
@@ -322,6 +386,7 @@ export class StyrRouter {
       tools: options?.tools,
       apiKey,
       baseUrl,
+      headers: this.resolveHeaders(model),
       signal: AbortSignal.timeout(timeout),
     };
 
@@ -330,8 +395,8 @@ export class StyrRouter {
 
   private async callModel(model: StyrModel, messages: StyrMessage[], options?: StyrCallOptions): Promise<Omit<StyrResponse, 'fallbacksTried'>> {
     const provider = getProviderForModel(model);
-    const apiKey = options?.apiKey || model.apiKey || this.config.apiKey;
-    const baseUrl = options?.baseUrl || model.baseUrl || this.config.baseUrl;
+    const apiKey = options?.apiKey || this.resolveApiKey(model);
+    const baseUrl = options?.baseUrl || model.baseUrl || this.resolveBaseUrl(model.provider);
     const timeout = model.timeoutMs || this.config.timeoutMs;
 
     const normalizedMessages = messages.map(m => {
@@ -355,6 +420,7 @@ export class StyrRouter {
       tools: options?.tools,
       apiKey,
       baseUrl,
+      headers: this.resolveHeaders(model),
       signal: AbortSignal.timeout(timeout),
     };
 
@@ -377,6 +443,12 @@ export class StyrRouter {
   }
 }
 
+function newSessionId(): string {
+  const c = (globalThis as any).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `styrr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function tryParseJSON(text: string | undefined): any {
   if (!text) return undefined;
   try {
@@ -391,8 +463,11 @@ export { estimateCost, findPricing, selectByStrategy, fitsContext, MODEL_PRICING
 export type { ModelPricing, RoutingStrategy } from './pricing.js';
 
 export { getProviderForModel } from './providers/index.js';
-export { OpenAICompatProvider, BedrockProvider, HuggingFaceProvider } from './providers/index.js';
+export { OpenAICompatProvider, BedrockProvider, HuggingFaceProvider, DEFAULT_PROVIDER_BASE_URLS } from './providers/index.js';
 export type { StyrProvider } from './providers/index.js';
+
+export { rankCatalog, toStyrModels, buildModelChain, catalogKey, blendedCostPer1M } from './catalog.js';
+export type { CatalogModel, RoutingRules } from './catalog.js';
 
 export { discoverFreeModels, lastResortModels, recommendToolsFirst } from './discovery.js';
 export type { DiscoveredModel, DiscoveryResult, DiscoveryOptions, OpenRouterModel, RecommendOptions, RecommendResult } from './discovery.js';

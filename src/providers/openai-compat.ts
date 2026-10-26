@@ -36,6 +36,7 @@ export class OpenAICompatProvider implements StyrProvider {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(params.headers || {}),
       },
       body: JSON.stringify(body),
       signal,
@@ -99,6 +100,7 @@ export class OpenAICompatProvider implements StyrProvider {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(params.headers || {}),
       },
       body: JSON.stringify(body),
       signal,

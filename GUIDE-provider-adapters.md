@@ -148,6 +148,45 @@ const router = new StyrRouter({
 });
 ```
 
+### 8. OpenCode Go
+
+OpenCode Go is an OpenAI-compatible provider with bare model IDs (`glm-5.3`,
+`minimax-m3`, `deepseek-v4.1-flash`). Because IDs collide with OpenRouter
+(`minimax-m3` exists in both), `provider` is **required** — there is no prefix
+auto-detection.
+
+```typescript
+const router = new StyrRouter({
+  apiKeys: {
+    openrouter: process.env.OPENROUTER_API_KEY!,
+    'opencode-go': process.env.OPENCODE_API_KEY!,
+  },
+  models: [
+    { id: 'glm-5.3', provider: 'opencode-go' },
+    { id: 'minimax-m3', provider: 'opencode-go' },
+  ],
+});
+```
+
+Notes:
+- Base URL: `https://opencode.ai/inference/go/openai/v1` (built-in default).
+- OpenCode Go requires an `x-opencode-session` header. Styrr generates one per
+  call automatically and sets `User-Agent: cc-mng/0.1.0` (the edge blocks some
+  default UAs). You can override both via `model.headers` or
+  `providers['opencode-go'].headers`.
+- There is no public `/models` endpoint (returns `403`). Use
+  `https://models.dev/api.json` → provider `opencode-go` to build a catalog.
+
+```typescript
+const router = new StyrRouter({
+  apiKeys: { 'opencode-go': process.env.OPENCODE_API_KEY! },
+  providers: {
+    'opencode-go': { headers: { 'x-opencode-session': crypto.randomUUID() } },
+  },
+  models: [{ id: 'glm-5.3', provider: 'opencode-go' }],
+});
+```
+
 ## Mixing Providers in a Fallback Chain
 
 This is where Styrr shines. Combine providers in one chain — the first model that succeeds wins.
@@ -235,8 +274,9 @@ const result = await provider.call({
 | `anthropic.`, `meta.`, `amazon.`, `mistral.`, `ai21.`, `cohere.` | AWS Bedrock |
 | `huggingface/` | HuggingFace |
 | Anything with `baseUrl` set | OpenAI-compatible |
+| `provider: 'opencode-go'` (explicit) | OpenCode Go (OpenAI-compatible) |
 
-If you set `provider` explicitly on the model config, it takes precedence over auto-detection.
+If you set `provider` explicitly on the model config, it takes precedence over auto-detection. OpenCode Go has no ID prefix, so `provider: 'opencode-go'` is mandatory for those models.
 
 ## Type Reference
 

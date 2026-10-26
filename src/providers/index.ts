@@ -11,12 +11,22 @@ export { HuggingFaceProvider } from './huggingface.js';
 
 const PROVIDER_MAP: Record<string, new () => StyrProvider> = {
   openrouter: OpenAICompatProvider,
+  'opencode-go': OpenAICompatProvider,
   openai: OpenAICompatProvider,
   nvidia: OpenAICompatProvider,
   ollama: OpenAICompatProvider,
   custom: OpenAICompatProvider,
   bedrock: BedrockProvider,
   huggingface: HuggingFaceProvider,
+};
+
+/** Built-in base URLs for providers that use an OpenAI-compatible API. */
+export const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
+  openrouter: 'https://openrouter.ai/api/v1',
+  'opencode-go': 'https://opencode.ai/inference/go/openai/v1',
+  openai: 'https://api.openai.com/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
+  ollama: 'http://localhost:11434/v1',
 };
 
 const MODEL_PREFIX_MAP: { prefix: string; provider: string }[] = [

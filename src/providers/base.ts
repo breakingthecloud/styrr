@@ -7,6 +7,8 @@ export interface ProviderCallParams {
   tools?: { type: 'function'; function: { name: string; description: string; parameters: object } }[];
   apiKey?: string;
   baseUrl?: string;
+  /** Extra request headers (e.g. OpenCode Go `x-opencode-session`). */
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
